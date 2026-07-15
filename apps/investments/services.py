@@ -144,7 +144,7 @@ def refresh_manual_prices(*, user) -> int:
     quotes = {q.symbol: q for q in get_price_provider().fetch_quotes(symbols)}
     now = timezone.now()
     updated = 0
-    touched_accounts: set[int] = set()
+    account_ids = {h.investment_account_id for h in manual_holdings}
 
     with transaction.atomic():
         for h in manual_holdings:
@@ -156,9 +156,11 @@ def refresh_manual_prices(*, user) -> int:
             h.recompute_market_value()
             h.save(update_fields=["current_price", "market_value", "last_priced_at"])
             updated += 1
-            touched_accounts.add(h.investment_account_id)
 
-        for acc_id in touched_accounts:
+        # Snapshot every manual account on each run — even those with no price
+        # update — using the holdings' last-known prices. Gating snapshots on a
+        # successful fetch let one provider outage permanently flatline the chart.
+        for acc_id in account_ids:
             acc = InvestmentAccount.objects.get(pk=acc_id)
             _snapshot_total(acc)
 

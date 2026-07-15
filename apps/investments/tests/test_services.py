@@ -35,7 +35,7 @@ class _FakeSimpleFIN:
 
 
 class _FakePriceProvider:
-    name = "stooq"
+    name = "yahoo_chart"
     quotes_by_symbol: dict[str, Decimal] = {}
 
     def fetch_quotes(self, symbols):
@@ -72,7 +72,7 @@ def fake_simplefin_single_holding():
 def fake_yahoo():
     original = price_registry._REGISTRY.copy()
     _FakePriceProvider.quotes_by_symbol = {}
-    price_registry._REGISTRY["stooq"] = _FakePriceProvider
+    price_registry._REGISTRY["yahoo_chart"] = _FakePriceProvider
     yield _FakePriceProvider
     price_registry._REGISTRY.clear()
     price_registry._REGISTRY.update(original)
@@ -159,5 +159,30 @@ def test_refresh_manual_prices_updates_only_manual_holdings(fake_yahoo):
     h = Holding.objects.get(symbol="VTI")
     assert h.current_price == Decimal("250.0000")
     assert h.market_value == Decimal("10000.00")
+    snap = PortfolioSnapshot.objects.get(investment_account=acc, date=date.today())
+    assert snap.total_value == Decimal("10000.00")
+
+
+@pytest.mark.django_db
+def test_refresh_manual_prices_snapshots_even_when_no_quotes(fake_yahoo):
+    """A price-provider outage must not stall the portfolio history.
+
+    When the provider returns zero quotes, we still write a snapshot for each
+    manual account using its holdings' last-known stored prices — otherwise a
+    single bad fetch permanently flatlines the chart (the Stooq-retirement bug).
+    """
+    user = User.objects.create_user(username="alice", password="correct-horse-battery-staple")
+    acc = create_manual_account(user=user, broker="Fidelity", name="401k")
+    h = upsert_manual_holding(investment_account=acc, symbol="VTI", shares=Decimal("40"), cost_basis=None)
+    # Simulate a prior successful refresh having stored a price.
+    h.current_price = Decimal("250.00")
+    h.recompute_market_value()
+    h.save(update_fields=["current_price", "market_value"])
+
+    # Provider returns nothing this run (outage / retired endpoint).
+    fake_yahoo.quotes_by_symbol = {}
+    updated = refresh_manual_prices(user=user)
+
+    assert updated == 0
     snap = PortfolioSnapshot.objects.get(investment_account=acc, date=date.today())
     assert snap.total_value == Decimal("10000.00")

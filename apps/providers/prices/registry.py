@@ -10,7 +10,7 @@ def register(provider_cls: Type[PriceProvider]) -> Type[PriceProvider]:
     return provider_cls
 
 
-def get(name: str = "stooq") -> PriceProvider:
+def get(name: str = "yahoo_chart") -> PriceProvider:
     try:
         cls = _REGISTRY[name]
     except KeyError as exc:
